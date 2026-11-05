@@ -16,6 +16,13 @@ from veterinaria.servicios.errores import ErrorNegocio
 from veterinaria.servicios.fachada import Servicios
 
 
+@pytest.fixture(autouse=True)
+def reloj_fijo(monkeypatch):
+    """Los turnos no pueden reservarse en el pasado: estas pruebas usan fechas fijas de
+    noviembre de 2026, así que el "ahora" del servicio queda fijado antes de esas fechas."""
+    monkeypatch.setattr("veterinaria.servicios.clinica_servicio.ahora", lambda: datetime(2026, 11, 1, 0, 0))
+
+
 class PaginaFalsa:
     def __init__(self):
         self.window = SimpleNamespace(width=0, height=0)
@@ -100,7 +107,7 @@ def test_clientes_y_mascotas(ui):
 def test_turnos_y_profesionales(ui):
     app, pag = ui
     ultimo = lambda: pag.mensajes[-1]
-    app.servicios.clinica.crear_cliente("Ana", "Pérez", "1")
+    app.servicios.clinica.crear_cliente("Ana", "Pérez", "30111222")
     app.servicios.clinica.crear_mascota(1, "Firulais", "Perro")
     prof, ag = pestana(app, st.PestanaProfesionales), pestana(app, st.PestanaAgenda)
     prof.cl_nombre.value, prof.cl_dir.value = "Centro", "Colón 100"; prof._crear_clinica()
@@ -130,7 +137,7 @@ def test_atencion_derivacion_y_comprobante(ui, tmp_path):
     ultimo = lambda: pag.mensajes[-1]
     srv = app.servicios
     cl = srv.clinica.crear_clinica("Centro", "Colón"); vet = srv.clinica.crear_veterinario(cl, "Luis", "Gómez", "MP-1")
-    cli = srv.clinica.crear_cliente("Ana", "Pérez", "1")
+    cli = srv.clinica.crear_cliente("Ana", "Pérez", "30111222")
     mas = srv.clinica.crear_mascota(cli, "Firulais", "Perro", abrir_historia=True)
     at, va = pestana(app, sa.PestanaAtenciones), pestana(app, sa.PestanaVacunas)
 
@@ -154,7 +161,7 @@ def test_laboratorio_completo_con_rechazo(ui, tmp_path):
     ultimo = lambda: pag.mensajes[-1]
     srv = app.servicios
     cl = srv.clinica.crear_clinica("Centro", "Colón"); vet = srv.clinica.crear_veterinario(cl, "Luis", "Gómez", "MP-1")
-    cli = srv.clinica.crear_cliente("Ana", "Pérez", "1")
+    cli = srv.clinica.crear_cliente("Ana", "Pérez", "30111222")
     mas = srv.clinica.crear_mascota(cli, "Firulais", "Perro", abrir_historia=True)
     from datetime import datetime, timedelta
     at = srv.atencion.registrar_atencion(mas, vet, datetime.now() - timedelta(days=1),
@@ -421,3 +428,39 @@ def test_tabla_de_reportes_oculta_hasta_generar(ui):
     assert p.tabla.visible is False
     p._generar()
     assert p.tabla.visible is True
+
+
+
+
+def test_eliminar_veterinario_y_clinica_desde_la_pantalla(ui, monkeypatch):
+    app, pag = ui
+    abiertos = []
+    monkeypatch.setattr(pag, "show_dialog", lambda d: (abiertos.append(d), PaginaFalsa.show_dialog(pag, d)))
+    prof = pestana(app, st.PestanaProfesionales)
+    centro = app.servicios.clinica.crear_clinica("Centro", "Colón 100")
+    app.servicios.clinica.crear_veterinario(centro, "Luis", "Gómez", "MP-1")
+    prof.refrescar()
+    # cada fila de clínicas y de veterinarios tiene su botón para eliminar
+    assert len(prof.t_cl.rows) == 1 and len(prof.t_vet.rows) == 1
+    prof._pedir_baja_clinica(prof.srv.clinica.listar_clinicas()[0])
+    abiertos[-1].actions[-1].on_click(None)                      # confirmar
+    assert "veterinarios" in pag.mensajes[-1]                    # no se borra: tiene veterinarios
+    prof._pedir_baja_vet(prof.srv.clinica.listar_veterinarios()[0])
+    abiertos[-1].actions[-1].on_click(None)
+    assert pag.mensajes[-1] == "Veterinario eliminado."
+    prof._pedir_baja_clinica(prof.srv.clinica.listar_clinicas()[0])
+    abiertos[-1].actions[-1].on_click(None)
+    assert pag.mensajes[-1] == "Clínica eliminada." and prof.srv.clinica.listar_clinicas() == []
+
+
+def test_calendarios_limitados_y_dni_solo_numeros(ui):
+    from datetime import date
+    app, pag = ui
+    mas, ag = pestana(app, sp.PestanaMascotas), pestana(app, st.PestanaAgenda)
+    cli = pestana(app, sp.PestanaClientes)
+    assert cli.dni_f.max_length == 8 and cli.dni_f.input_filter is not None
+    evento = type("E", (), {"page": pag})()
+    c.abrir_calendario(evento, mas.nac_f, False, "hasta_hoy")
+    assert pag.pickers[-1].last_date.date() == date.today()
+    c.abrir_calendario(evento, ag.fecha, False, "desde_hoy")
+    assert pag.pickers[-1].first_date.date() == date.today()

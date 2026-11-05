@@ -1102,11 +1102,23 @@ DAO, y hace `commit`; ante cualquier error hace `rollback`. Las acciones en un p
 (`derivar`, `empaquetar`, `recibir_remito`) ocurren en una sola transacción: si algo falla no queda
 nada a medias. Las violaciones de reglas se informan como `ErrorNegocio` con un mensaje legible y
 los errores de integridad de SQLite (DNI o matrícula repetidos, claves foráneas) se traducen al
-mismo tipo. Los IDs explícitos que exigen los DAO los genera el servicio (`MAX(id) + 1`). La capa no
-agrega reglas nuevas: usa `Veterinario.agregar_turno()`, `Mascota.registrar_atencion()`,
-`RemitoBiologico`, `Envio`, `Recepcion`, `ResultadoAnalisis` y las estrategias existentes; sólo suma
+mismo tipo. Los IDs explícitos que exigen los DAO los genera el servicio (`MAX(id) + 1`). Las reglas
+del negocio siguen en el dominio: la capa usa `Veterinario.agregar_turno()`, `Mascota.registrar_atencion()`,
+`RemitoBiologico`, `Envio`, `Recepcion`, `ResultadoAnalisis` y las estrategias existentes, y suma
 mensajes que explican por qué una operación fue rechazada. `servicios/datos_demo.py` crea los datos
 de demostración a través de esos mismos servicios.
+
+Además, la capa valida los datos que se ingresan (`servicios/base.py`):
+
+- nombre y apellido de clientes y veterinarios: sólo letras (se aceptan tildes, ñ, espacios,
+  apóstrofo y guion, como en «María José» o «Pérez-Núñez»);
+- DNI: sólo números, de 7 u 8 dígitos (el campo de la pantalla no admite otra cosa);
+- fecha de nacimiento de la mascota: no puede ser posterior a hoy;
+- turnos: no se reservan en una fecha u hora que ya pasó.
+
+Clínicas y veterinarios se pueden eliminar desde **Turnos › Veterinarios y agendas**, con
+confirmación. Un veterinario con turnos o atenciones no se elimina (al eliminarlo se borra también su
+agenda), y una clínica sólo se elimina si no tiene veterinarios ni remitos.
 
 Los cuatro reportes se generan con `GeneradorReportes` y las estrategias existentes; el servicio sólo
 compone los datos (por ejemplo, agrega mascota y clínica al reporte de atenciones). El CSV usa `;`

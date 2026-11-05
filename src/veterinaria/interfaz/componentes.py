@@ -116,11 +116,21 @@ def _valor_o_ahora(texto: str, formato: str) -> datetime:
         return datetime.now().replace(second=0, microsecond=0)
 
 
-def abrir_calendario(e, control: ft.TextField, con_hora: bool):
+def abrir_calendario(e, control: ft.TextField, con_hora: bool, limite: str | None = None):
     """Abre el calendario desplegable y escribe la fecha elegida en el campo
-    (conserva la hora si el campo es de fecha y hora)."""
+    (conserva la hora si el campo es de fecha y hora).
+
+    ``limite``: "hasta_hoy" no ofrece días futuros (nacimiento); "desde_hoy" no ofrece días
+    pasados (turnos). La validación definitiva la hace el servicio."""
     formato = FMT_FECHA_HORA if con_hora else FMT_FECHA
     actual = _valor_o_ahora(control.value, formato)
+    hoy = datetime.combine(date.today(), datetime.min.time())
+    primera, ultima = datetime(1990, 1, 1), datetime(2100, 12, 31)
+    if limite == "hasta_hoy":
+        ultima = hoy
+    elif limite == "desde_hoy":
+        primera = hoy
+    actual = min(max(actual, primera), ultima.replace(hour=23, minute=59))
 
     def al_elegir(ev):
         elegida = ev.control.value
@@ -129,7 +139,7 @@ def abrir_calendario(e, control: ft.TextField, con_hora: bool):
         _actualizar_control(control)
 
     e.page.show_dialog(ft.DatePicker(
-        value=actual, first_date=datetime(1990, 1, 1), last_date=datetime(2100, 12, 31),
+        value=actual, first_date=primera, last_date=ultima,
         locale=LOCALE, help_text="Seleccionar fecha", cancel_text="Cancelar",
         confirm_text="Aceptar", on_change=al_elegir))
 
@@ -157,7 +167,7 @@ def _boton_pequeno(icono, tooltip, on_click) -> ft.IconButton:
 
 
 def campo_fecha(etiqueta="Fecha", ancho=170, valor: date | datetime | None = None,
-                con_hora=False, **opciones) -> ft.TextField:
+                con_hora=False, limite: str | None = None, **opciones) -> ft.TextField:
     """Campo de fecha (o fecha y hora) con máscara y calendario desplegable.
 
     ``valor``: date/datetime o None. En los campos con hora hay además un reloj para elegir la hora."""
@@ -168,7 +178,7 @@ def campo_fecha(etiqueta="Fecha", ancho=170, valor: date | datetime | None = Non
                     hint_text="DD/MM/AAAA HH:MM" if con_hora else "DD/MM/AAAA", **opciones)
     control.data = texto
     botones = [_boton_pequeno(ft.Icons.CALENDAR_MONTH, "Elegir fecha en el calendario",
-                              lambda e: abrir_calendario(e, control, con_hora))]
+                              lambda e: abrir_calendario(e, control, con_hora, limite))]
     if con_hora:
         botones.append(_boton_pequeno(ft.Icons.ACCESS_TIME, "Elegir hora",
                                       lambda e: abrir_reloj(e, control, True)))

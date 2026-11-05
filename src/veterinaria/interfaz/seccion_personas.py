@@ -15,7 +15,9 @@ class PestanaClientes(Pantalla):
         self.editando = None
         self.encabezado = ft.Text("Nuevo cliente", size=16, weight=ft.FontWeight.W_600)
         self.nombre_f, self.apellido_f = c.campo("Nombre"), c.campo("Apellido")
-        self.dni_f, self.tel_f, self.email_f = c.campo("DNI", 160), c.campo("Teléfono", 180), c.campo("Email", 260)
+        # el DNI sólo acepta números (hasta 8); el servicio valida que tenga 7 u 8 dígitos
+        self.dni_f = c.campo("DNI", 160, max_length=8, input_filter=ft.InputFilter(regex_string=r"[0-9]"))
+        self.tel_f, self.email_f = c.campo("Teléfono", 180), c.campo("Email", 260)
         self.btn_cancelar = c.boton("Cancelar edición", self._limpiar, ft.Icons.CLOSE, False)
         self.btn_cancelar.visible = False
         self.buscar = c.campo("Buscar por nombre, apellido o DNI", 340, on_change=self._al_buscar)
@@ -97,7 +99,7 @@ class PestanaMascotas(Pantalla):
         self.nombre_f = c.campo("Nombre", 200)
         self.especie = c.desplegable_fijo("Especie", c.ESPECIES, "Perro")
         self.raza_f = c.campo("Raza", 200)
-        self.nac_f = c.campo_fecha("Nacimiento")
+        self.nac_f = c.campo_fecha("Nacimiento", limite="hasta_hoy")
         self.sexo = c.desplegable_fijo("Sexo", ["", "Macho", "Hembra"], "", 130)
         self.btn_cancelar = c.boton("Cancelar edición", self._limpiar, ft.Icons.CLOSE, False)
         self.btn_cancelar.visible = False

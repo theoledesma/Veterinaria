@@ -19,16 +19,17 @@ from veterinaria.persistencia.historia_clinica_dao import HistoriaClinicaDAO
 from veterinaria.persistencia.mascota_dao import MascotaDAO
 from veterinaria.persistencia.turno_dao import TurnoDAO
 from veterinaria.persistencia.veterinario_dao import VeterinarioDAO
-from veterinaria.servicios.base import ServicioBase, fmt_fecha_hora, requerir_texto
+from veterinaria.servicios.base import (ServicioBase, ahora, fmt_fecha_hora, requerir_dni, requerir_nombre,
+                                        requerir_texto, validar_fecha_nacimiento)
 from veterinaria.servicios.errores import ErrorNegocio
 
 
 class ClinicaServicio(ServicioBase):
     # ------------------------------------------------------------- clientes
     def crear_cliente(self, nombre, apellido, dni, telefono="", email="") -> int:
-        nombre = requerir_texto(nombre, "Nombre")
-        apellido = requerir_texto(apellido, "Apellido")
-        dni = requerir_texto(dni, "DNI")
+        nombre = requerir_nombre(nombre, "Nombre")
+        apellido = requerir_nombre(apellido, "Apellido")
+        dni = requerir_dni(dni)
         with self._tx() as con:
             id_cliente = self._siguiente_id(con, "cliente")
             ClienteDAO(con).crear(
@@ -43,9 +44,9 @@ class ClinicaServicio(ServicioBase):
             cliente = dao.obtener_por_id(id_cliente)
             if cliente is None:
                 raise ErrorNegocio("El cliente no existe.")
-            cliente.nombre = requerir_texto(nombre, "Nombre")
-            cliente.apellido = requerir_texto(apellido, "Apellido")
-            cliente.dni = requerir_texto(dni, "DNI")
+            cliente.nombre = requerir_nombre(nombre, "Nombre")
+            cliente.apellido = requerir_nombre(apellido, "Apellido")
+            cliente.dni = requerir_dni(dni)
             cliente.telefono = (telefono or "").strip()
             cliente.email = (email or "").strip()
             dao.actualizar(cliente)
@@ -74,6 +75,7 @@ class ClinicaServicio(ServicioBase):
             raise ErrorNegocio("Toda mascota debe tener un responsable (cliente).")
         nombre = requerir_texto(nombre, "Nombre")
         especie = requerir_texto(especie, "Especie")
+        validar_fecha_nacimiento(fecha_nacimiento)
         with self._tx() as con:
             responsable = ClienteDAO(con).obtener_por_id(id_cliente)
             if responsable is None:
@@ -104,6 +106,7 @@ class ClinicaServicio(ServicioBase):
             actual = dao.obtener_por_id(id_mascota)
             if actual is None:
                 raise ErrorNegocio("La mascota no existe.")
+            validar_fecha_nacimiento(fecha_nacimiento)
             nueva = Mascota(id_mascota, requerir_texto(nombre, "Nombre"),
                             requerir_texto(especie, "Especie"), actual.responsable,
                             (raza or "").strip(), fecha_nacimiento, (sexo or "").strip())
@@ -151,6 +154,19 @@ class ClinicaServicio(ServicioBase):
             ClinicaDAO(con).crear(Clinica(id_clinica, nombre, direccion, (telefono or "").strip()))
         return id_clinica
 
+    def eliminar_clinica(self, id_clinica):
+        """Sólo se elimina una clínica sin veterinarios ni remitos asociados."""
+        with self._tx() as con:
+            if ClinicaDAO(con).obtener_por_id(id_clinica) is None:
+                raise ErrorNegocio("La clínica no existe.")
+            if VeterinarioDAO(con).listar_por_clinica(id_clinica):
+                raise ErrorNegocio("La clínica tiene veterinarios: elimínelos antes de eliminar la clínica.")
+            try:
+                ClinicaDAO(con).eliminar(id_clinica)
+            except sqlite3.IntegrityError:
+                raise ErrorNegocio("La clínica tiene remitos biológicos registrados y no puede "
+                                   "eliminarse.") from None
+
     def listar_clinicas(self) -> list[dict]:
         with self._lectura() as con:
             return [
@@ -163,8 +179,8 @@ class ClinicaServicio(ServicioBase):
     def crear_veterinario(self, id_clinica, nombre, apellido, matricula, especialidad="") -> int:
         if id_clinica is None:
             raise ErrorNegocio("Seleccione la clínica del veterinario.")
-        nombre = requerir_texto(nombre, "Nombre")
-        apellido = requerir_texto(apellido, "Apellido")
+        nombre = requerir_nombre(nombre, "Nombre")
+        apellido = requerir_nombre(apellido, "Apellido")
         matricula = requerir_texto(matricula, "Matrícula")
         with self._tx() as con:
             clinica = ClinicaDAO(con).obtener_por_id(id_clinica)
@@ -175,6 +191,20 @@ class ClinicaServicio(ServicioBase):
             clinica.agregar_veterinario(vet)
             VeterinarioDAO(con).crear(vet, id_clinica)
         return id_vet
+
+    def eliminar_veterinario(self, id_veterinario):
+        """Elimina al veterinario y su agenda si no tiene turnos ni atenciones registradas."""
+        with self._tx() as con:
+            if VeterinarioDAO(con).obtener_por_id(id_veterinario) is None:
+                raise ErrorNegocio("El veterinario no existe.")
+            if TurnoDAO(con).listar_por_veterinario(id_veterinario):
+                raise ErrorNegocio("El veterinario tiene turnos registrados y no puede eliminarse.")
+            AgendaMedicaDAO(con).eliminar_por_veterinario(id_veterinario)
+            try:
+                VeterinarioDAO(con).eliminar(id_veterinario)
+            except sqlite3.IntegrityError:
+                raise ErrorNegocio("El veterinario tiene atenciones registradas y no puede "
+                                   "eliminarse.") from None
 
     def listar_veterinarios(self) -> list[dict]:
         with self._lectura() as con:
@@ -215,6 +245,8 @@ class ClinicaServicio(ServicioBase):
     # ---------------------------------------------------------------- turnos
     def agendar_turno(self, id_veterinario, id_mascota, inicio, fin, motivo="") -> int:
         """RN02/RN03: dentro de la agenda y sin superposición con turnos activos."""
+        if inicio < ahora():
+            raise ErrorNegocio("No se puede reservar un turno en una fecha u hora que ya pasó.")
         with self._tx() as con:
             vet = VeterinarioDAO(con).obtener_por_id(id_veterinario)
             if vet is None:

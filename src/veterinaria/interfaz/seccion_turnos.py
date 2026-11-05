@@ -18,7 +18,7 @@ class PestanaAgenda(Pantalla):
     def construir(self):
         self.vet = c.selector("Veterinario", 300)
         self.mascota = c.selector("Mascota", 300)
-        self.fecha = c.campo_fecha("Fecha", 180, date.today())
+        self.fecha = c.campo_fecha("Fecha", 180, date.today(), limite="desde_hoy")
         self.hora = c.campo_hora("Hora (HH:MM)", 150, "10:00")
         self.duracion = c.desplegable_fijo("Duración", ["15", "30", "45", "60"], "30", 110)
         self.motivo = c.campo("Motivo", 260)
@@ -103,7 +103,8 @@ class PestanaProfesionales(Pantalla):
         self.vet_agenda = c.selector("Veterinario", 320, self._cargar_agenda)
         self.dias = {d: ft.Checkbox(label=t, value=False) for d, t in self.ETIQUETAS_DIAS.items()}
         self.desde, self.hasta = c.campo_hora("Desde (HH:MM)", 160, "08:00"), c.campo_hora("Hasta (HH:MM)", 160, "16:00")
-        self.t_cl, self.t_vet = c.crear_tabla(self.COLS_C), c.crear_tabla(self.COLS_V)
+        self.t_cl = c.crear_tabla(self.COLS_C, con_acciones=True)
+        self.t_vet = c.crear_tabla(self.COLS_V, con_acciones=True)
         return c.pagina(
             c.tarjeta(c.fila(self.cl_nombre, self.cl_dir, self.cl_tel),
                       c.boton("Registrar clínica", self._crear_clinica, ft.Icons.ADD),
@@ -123,8 +124,20 @@ class PestanaProfesionales(Pantalla):
         vets = self.srv.clinica.listar_veterinarios()
         c.cargar_selector(self.v_clinica, clinicas)
         c.cargar_selector(self.vet_agenda, vets)
-        c.llenar_tabla(self.t_cl, self.COLS_C, clinicas)
-        c.llenar_tabla(self.t_vet, self.COLS_V, vets)
+        c.llenar_tabla(self.t_cl, self.COLS_C, clinicas, lambda f: [
+            c.boton_icono(ft.Icons.DELETE_OUTLINE, "Eliminar clínica", lambda e, f=f: self._pedir_baja_clinica(f),
+                          ft.Colors.RED_400)])
+        c.llenar_tabla(self.t_vet, self.COLS_V, vets, lambda f: [
+            c.boton_icono(ft.Icons.DELETE_OUTLINE, "Eliminar veterinario", lambda e, f=f: self._pedir_baja_vet(f),
+                          ft.Colors.RED_400)])
+
+    def _pedir_baja_clinica(self, fila):
+        c.confirmar(self.app, f"¿Eliminar la clínica {fila['nombre']}?", lambda: self.ejecutar(
+            lambda: self.srv.clinica.eliminar_clinica(fila["id"]), "Clínica eliminada."))
+
+    def _pedir_baja_vet(self, fila):
+        c.confirmar(self.app, f"¿Eliminar a {fila['apellido']}, {fila['nombre']} y su agenda?", lambda: self.ejecutar(
+            lambda: self.srv.clinica.eliminar_veterinario(fila["id"]), "Veterinario eliminado."))
 
     def _crear_clinica(self, e=None):
         if self.ejecutar(lambda: self.srv.clinica.crear_clinica(

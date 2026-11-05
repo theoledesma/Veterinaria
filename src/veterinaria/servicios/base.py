@@ -1,8 +1,9 @@
 """Infraestructura común de los servicios: conexión, transacciones e IDs."""
 
+import re
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import date, datetime
 
 from veterinaria.persistencia.conexion import abrir_conexion
 from veterinaria.persistencia.inicializar_bd import inicializar_bd
@@ -106,6 +107,32 @@ def requerir_texto(valor, campo: str) -> str:
     if not texto:
         raise ErrorNegocio(f"El campo «{campo}» es obligatorio.")
     return texto
+
+
+# letras (con tildes, ü y ñ) separadas por un espacio, apóstrofo o guion: «María José», «O'Connor»
+_PATRON_NOMBRE = re.compile(r"[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]+(?:[ '\-][A-Za-zÁÉÍÓÚÜÑáéíóúüñ]+)*")
+DNI_MIN, DNI_MAX = 7, 8
+
+
+def requerir_nombre(valor, campo: str) -> str:
+    """Nombre o apellido de una persona: sólo letras."""
+    texto = " ".join(requerir_texto(valor, campo).split())
+    if not _PATRON_NOMBRE.fullmatch(texto):
+        raise ErrorNegocio(f"El campo «{campo}» sólo admite letras.")
+    return texto
+
+
+def requerir_dni(valor) -> str:
+    """DNI: sólo números, entre 7 y 8 dígitos."""
+    dni = requerir_texto(valor, "DNI").replace(".", "")
+    if not dni.isdigit() or not DNI_MIN <= len(dni) <= DNI_MAX:
+        raise ErrorNegocio(f"El DNI debe tener sólo números, entre {DNI_MIN} y {DNI_MAX} dígitos.")
+    return dni
+
+
+def validar_fecha_nacimiento(fecha) -> None:
+    if fecha is not None and fecha > date.today():
+        raise ErrorNegocio("La fecha de nacimiento no puede ser posterior a hoy.")
 
 
 def fmt_fecha_hora(valor) -> str:

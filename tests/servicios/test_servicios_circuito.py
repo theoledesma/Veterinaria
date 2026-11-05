@@ -13,6 +13,13 @@ from veterinaria.servicios.fachada import Servicios
 LUNES = datetime(2026, 11, 2, 9, 0)  # lunes
 
 
+@pytest.fixture(autouse=True)
+def reloj_fijo(monkeypatch):
+    """Los turnos no pueden reservarse en el pasado: estas pruebas usan fechas fijas de
+    noviembre de 2026, así que el "ahora" del servicio queda fijado antes de esas fechas."""
+    monkeypatch.setattr("veterinaria.servicios.clinica_servicio.ahora", lambda: datetime(2026, 11, 1, 0, 0))
+
+
 @pytest.fixture
 def s(tmp_path):
     return Servicios(tmp_path / "vet.db")
@@ -336,3 +343,82 @@ def test_pdf_de_reporte_incluye_el_grafico(s, base, tmp_path):
     ruta = tmp_path / "atenciones.pdf"
     exportar_pdf(ruta, s.reportes.atenciones_derivaciones())
     assert b"/Subtype /Image" in ruta.read_bytes()
+
+
+# ------------------------------------------------- validaciones de datos y bajas de profesionales
+@pytest.mark.parametrize("nombre", ["Ana2", "Ana!", "J.", "123"])
+def test_nombre_y_apellido_solo_letras(s, nombre):
+    with pytest.raises(ErrorNegocio, match="sólo admite letras"):
+        s.clinica.crear_cliente(nombre, "Pérez", "30111223")
+    with pytest.raises(ErrorNegocio, match="sólo admite letras"):
+        s.clinica.crear_cliente("Ana", nombre, "30111223")
+
+
+def test_nombres_compuestos_con_tilde_y_guion_son_validos(s):
+    id_cli = s.clinica.crear_cliente("María José", "Pérez-Núñez", "30111223")
+    assert s.clinica.listar_clientes()[0]["apellido"] == "Pérez-Núñez" and id_cli == 1
+
+
+@pytest.mark.parametrize("dni", ["123", "123456789", "30a11222", "30 111 22"])
+def test_dni_solo_numeros_de_7_u_8_digitos(s, dni):
+    with pytest.raises(ErrorNegocio, match="DNI"):
+        s.clinica.crear_cliente("Ana", "Pérez", dni)
+
+
+def test_modificar_cliente_tambien_valida(s, base):
+    with pytest.raises(ErrorNegocio, match="DNI"):
+        s.clinica.modificar_cliente(base["cli"], "Ana", "Pérez", "12")
+    with pytest.raises(ErrorNegocio, match="letras"):
+        s.clinica.modificar_cliente(base["cli"], "Ana3", "Pérez", "30111222")
+
+
+def test_veterinario_con_nombre_invalido(s, base):
+    with pytest.raises(ErrorNegocio, match="letras"):
+        s.clinica.crear_veterinario(base["cl"], "Luis1", "Gómez", "MP-9")
+
+
+def test_fecha_de_nacimiento_futura(s, base):
+    manana = date.today() + timedelta(days=1)
+    with pytest.raises(ErrorNegocio, match="nacimiento"):
+        s.clinica.crear_mascota(base["cli"], "Toby", "Perro", fecha_nacimiento=manana)
+    with pytest.raises(ErrorNegocio, match="nacimiento"):
+        s.clinica.modificar_mascota(base["mas"], "Firulais", "Perro", fecha_nacimiento=manana)
+    s.clinica.crear_mascota(base["cli"], "Toby", "Perro", fecha_nacimiento=date.today())
+
+
+def test_turno_en_el_pasado(s, base):
+    # el "ahora" fijado es 01/11/2026 00:00: un turno del lunes 26/10 ya pasó
+    pasado = LUNES - timedelta(days=7)
+    with pytest.raises(ErrorNegocio, match="ya pasó"):
+        s.clinica.agendar_turno(base["vet"], base["mas"], pasado, pasado + timedelta(minutes=30))
+
+
+def test_eliminar_veterinario_sin_turnos_borra_tambien_su_agenda(s, base):
+    s.clinica.eliminar_veterinario(base["vet"])
+    assert s.clinica.listar_veterinarios() == []
+    assert s.clinica.obtener_agenda(base["vet"]) is None
+
+
+def test_no_se_elimina_veterinario_con_turnos_o_atenciones(s, base):
+    s.clinica.agendar_turno(base["vet"], base["mas"], LUNES, LUNES + timedelta(minutes=30))
+    with pytest.raises(ErrorNegocio, match="turnos"):
+        s.clinica.eliminar_veterinario(base["vet"])
+    otro = s.clinica.crear_veterinario(base["cl"], "Marta", "Ruiz", "MP-2")
+    s.atencion.registrar_atencion(base["mas"], otro, LUNES, TipoAtencion.CONSULTA, "Control")
+    with pytest.raises(ErrorNegocio, match="atenciones"):
+        s.clinica.eliminar_veterinario(otro)
+
+
+def test_eliminar_clinica(s, base):
+    vacia = s.clinica.crear_clinica("Clínica Norte", "Av. Norte 1")
+    s.clinica.eliminar_clinica(vacia)
+    assert [c["nombre"] for c in s.clinica.listar_clinicas()] == ["Clínica Centro"]
+    with pytest.raises(ErrorNegocio, match="veterinarios"):
+        s.clinica.eliminar_clinica(base["cl"])
+
+
+def test_no_se_elimina_clinica_con_remitos(s, base):
+    norte = s.clinica.crear_clinica("Clínica Norte", "Av. Norte 1")         # sin veterinarios
+    s.laboratorio.crear_remito(norte, s.laboratorio.crear_conservadora("CONS-9"), fecha_emision=LUNES)
+    with pytest.raises(ErrorNegocio, match="remitos"):
+        s.clinica.eliminar_clinica(norte)
